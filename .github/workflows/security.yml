@@ -60,14 +60,14 @@ jobs:
           soft_fail: true  # Dockerfile hardening: informational for now
 
       - name: Upload Checkov Terraform SARIF
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: checkov-terraform.sarif
           category: checkov-terraform
 
       - name: Upload Checkov Docker SARIF
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: checkov-docker.sarif
@@ -110,7 +110,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload Trivy SARIF
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: trivy-${{ matrix.service }}.sarif
@@ -138,7 +138,7 @@ jobs:
           ignore-unfixed: true
 
       - name: Upload Trivy filesystem SARIF
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: trivy-filesystem.sarif
@@ -185,7 +185,7 @@ jobs:
             || true  # don't fail build; upload results for review
 
       - name: Upload Bandit SARIF
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: services/${{ matrix.service }}/bandit-${{ matrix.service }}.sarif
@@ -233,7 +233,7 @@ jobs:
             --suppression .github/owasp-suppression.xml
 
       - name: Upload OWASP results
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: dependency-check-report/dependency-check-report.sarif
