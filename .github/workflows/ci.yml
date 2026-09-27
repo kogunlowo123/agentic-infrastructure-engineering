@@ -181,7 +181,7 @@ jobs:
             --junit-xml=junit-${{ matrix.service }}.xml
 
       - name: Upload coverage report
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         if: always()
         with:
           files: services/${{ matrix.service }}/coverage-${{ matrix.service }}.xml
@@ -293,7 +293,7 @@ jobs:
             --junit-xml=junit-integration-${{ matrix.service }}.xml
 
       - name: Upload integration coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         if: always()
         with:
           files: services/${{ matrix.service }}/coverage-integration-${{ matrix.service }}.xml
