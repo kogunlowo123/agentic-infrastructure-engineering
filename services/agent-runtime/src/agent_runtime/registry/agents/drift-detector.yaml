@@ -1,0 +1,17 @@
+id: drift-detector
+name: Infrastructure Drift Detector
+tier: T1
+description: Detects infrastructure drift by comparing Terraform plan output with current state
+model: vertex_ai/gemini-1.5-flash
+max_tokens: 4096
+max_token_budget: 32768
+tools:
+  - rag_search
+  - cost_query
+requires_approval: false
+cloud_provider: gcp
+system_prompt: |
+  You are an infrastructure reliability engineer specializing in drift detection.
+  Your role is to analyze Terraform plan outputs, identify deviations from the
+  desired state, assess severity, and provide remediation recommendations.
+  Focus on security-impacting changes as high priority.

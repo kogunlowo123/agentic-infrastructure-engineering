@@ -1,0 +1,40 @@
+title: Infrastructure Drift Anomaly
+id: 2c4d6e8f-0a2b-4c6d-8e0f-1a3b5c7d9e0f
+status: production
+description: >
+  Detects infrastructure drift where GCP resources are modified outside
+  Terraform, indicating potential unauthorized changes or misconfigurations.
+author: Agentic Infrastructure Engineering
+date: 2024-01-01
+references:
+  - https://attack.mitre.org/techniques/T1578/004/
+tags:
+  - attack.defense_evasion
+  - attack.t1578.004
+  - drift
+  - gcp
+logsource:
+  category: cloud
+  product: gcp
+  service: cloud_audit
+detection:
+  gce_modification:
+    protoPayload.serviceName: "compute.googleapis.com"
+    protoPayload.methodName|startswith:
+      - "v1.compute.instances.setMetadata"
+      - "v1.compute.instances.setLabels"
+      - "v1.compute.firewalls.insert"
+      - "v1.compute.firewalls.patch"
+  gke_modification:
+    protoPayload.serviceName: "container.googleapis.com"
+    protoPayload.methodName|startswith:
+      - "google.container.v1.ClusterManager.UpdateCluster"
+      - "google.container.v1.ClusterManager.SetNodePoolSize"
+  filter_terraform:
+    protoPayload.authenticationInfo.principalEmail|endswith:
+      - "@cloudbuild.gserviceaccount.com"
+  condition: (gce_modification or gke_modification) and not filter_terraform
+falsepositives:
+  - Auto-scaling events from GKE
+  - Authorized emergency changes with break-glass credentials
+level: medium

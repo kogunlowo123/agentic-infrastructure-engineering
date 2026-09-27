@@ -1,0 +1,36 @@
+---
+# Session TTL policies per agent family and tier
+# All values in seconds
+
+defaults:
+  session_ttl: 3600          # 1 hour default session
+  token_ttl: 300             # 5 min API token
+  refresh_ttl: 86400         # 24 hour refresh token
+
+agent_policies:
+  iac-generator:
+    tier: T2
+    session_ttl: 3600
+    approval_timeout: 86400   # T2 approval request expires in 24h
+    idle_timeout: 600         # session killed after 10min idle
+
+  drift-detector:
+    tier: T1
+    session_ttl: 1800
+    idle_timeout: 300
+
+  cost-optimizer:
+    tier: T1
+    session_ttl: 1800
+    idle_timeout: 300
+
+eviction_policy:
+  strategy: lru              # least-recently-used eviction
+  max_sessions_per_tenant: 10
+  max_sessions_total: 1000
+
+rotation:
+  # Rotate short-lived credentials after this many uses
+  max_uses_per_token: 100
+  # Force rotation after this time regardless of usage
+  max_age_seconds: 86400

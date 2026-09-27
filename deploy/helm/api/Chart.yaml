@@ -1,0 +1,14 @@
+apiVersion: v2
+name: agentic-infra-api
+description: API Gateway for Agentic Infrastructure Engineering Platform
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - agentic
+  - infrastructure
+  - api
+home: https://github.com/kogunlowo123/agentic-infrastructure-engineering
+maintainers:
+  - name: kogunlowo123
+    email: kogunlowo@gmail.com

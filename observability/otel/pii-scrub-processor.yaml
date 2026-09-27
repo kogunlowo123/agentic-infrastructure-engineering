@@ -1,0 +1,43 @@
+---
+# PII scrub rules for OpenTelemetry transform processor
+# Applied to llm.prompt, llm.response, and log body fields
+# before export to Cloud Logging / Cloud Trace.
+
+pii_patterns:
+  email:
+    regex: "\\b[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}\\b"
+    replacement: "<EMAIL>"
+    fields:
+      - llm.prompt
+      - llm.response
+      - log.body
+
+  credit_card:
+    regex: "\\b(?:\\d{4}[-\\s]?){3}\\d{4}\\b"
+    replacement: "<CARD>"
+    fields:
+      - llm.prompt
+      - llm.response
+      - log.body
+
+  phone_us:
+    regex: "\\b(?:\\+?1[-.\\s]?)?\\(?\\d{3}\\)?[-.\\s]?\\d{3}[-.\\s]?\\d{4}\\b"
+    replacement: "<PHONE>"
+    fields:
+      - llm.prompt
+      - llm.response
+      - log.body
+
+  ssn:
+    regex: "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+    replacement: "<SSN>"
+    fields:
+      - llm.prompt
+      - llm.response
+      - log.body
+
+# Fields to drop entirely (never log their values)
+drop_fields:
+  - llm.api_key
+  - db.password
+  - http.request.header.authorization

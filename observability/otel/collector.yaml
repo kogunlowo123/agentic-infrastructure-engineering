@@ -1,0 +1,68 @@
+apiVersion: opentelemetry.io/v1alpha1
+kind: OpenTelemetryCollector
+metadata:
+  name: agentic-infra-collector
+  namespace: agentic-infra
+spec:
+  mode: Deployment
+  replicas: 2
+  config: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: "0.0.0.0:4317"
+          http:
+            endpoint: "0.0.0.0:4318"
+
+    processors:
+      batch:
+        timeout: 10s
+        send_batch_size: 1024
+
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 512
+        spike_limit_mib: 128
+
+      # PII scrubbing — see pii-scrub-processor.yaml
+      transform/pii_scrub:
+        trace_statements:
+          - context: span
+            statements:
+              - replace_pattern(attributes["llm.prompt"], "\\b[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}\\b", "<EMAIL>")
+              - replace_pattern(attributes["llm.response"], "\\b[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}\\b", "<EMAIL>")
+        log_statements:
+          - context: log
+            statements:
+              - replace_pattern(body, "\\b[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}\\b", "<EMAIL>")
+
+      resource:
+        attributes:
+          - key: service.namespace
+            value: agentic-infra
+            action: upsert
+
+    exporters:
+      googlecloud:
+        project: "${GCP_PROJECT_ID}"
+        log:
+          default_log_name: "agentic-infra"
+
+      prometheus:
+        endpoint: "0.0.0.0:8889"
+
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, transform/pii_scrub, resource, batch]
+          exporters: [googlecloud]
+        metrics:
+          receivers: [otlp]
+          processors: [memory_limiter, resource, batch]
+          exporters: [googlecloud, prometheus]
+        logs:
+          receivers: [otlp]
+          processors: [memory_limiter, transform/pii_scrub, resource, batch]
+          exporters: [googlecloud]

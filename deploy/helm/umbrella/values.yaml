@@ -1,0 +1,16 @@
+global:
+  imageRegistry: us-central1-docker.pkg.dev
+  projectId: ""
+  environment: dev
+
+api:
+  enabled: true
+  replicaCount: 2
+  image:
+    tag: ""
+
+agentRuntime:
+  enabled: true
+  replicaCount: 2
+  image:
+    tag: ""

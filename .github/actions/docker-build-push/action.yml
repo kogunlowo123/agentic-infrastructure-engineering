@@ -1,0 +1,205 @@
+name: Docker Build and Push to Artifact Registry
+description: >
+  Builds a Docker image for a given service and pushes it to GCP Artifact Registry.
+  Supports multi-platform builds, image signing, and vulnerability scanning.
+
+inputs:
+  service:
+    description: Service name (must match a directory under services/)
+    required: true
+  gcp-project-id:
+    description: GCP project ID
+    required: true
+  gcp-region:
+    description: GCP region for Artifact Registry
+    required: false
+    default: us-central1
+  registry-repository:
+    description: Artifact Registry repository name
+    required: false
+    default: agentic-infra
+  image-tag:
+    description: Primary image tag (e.g., git sha, semver)
+    required: true
+  additional-tags:
+    description: >
+      Comma-separated list of additional tags to apply (e.g., "latest,0.1.0").
+      These are applied in addition to the primary image-tag.
+    required: false
+    default: ""
+  build-args:
+    description: >
+      Newline-separated list of Docker build arguments.
+      Example: |
+        BUILD_DATE=2024-01-01
+        GIT_COMMIT=abc1234
+    required: false
+    default: ""
+  dockerfile:
+    description: Path to the Dockerfile relative to the service context
+    required: false
+    default: Dockerfile
+  target:
+    description: Docker build target stage (for multi-stage builds)
+    required: false
+    default: production
+  platforms:
+    description: Comma-separated list of target platforms
+    required: false
+    default: linux/amd64
+  push:
+    description: Whether to push the built image to the registry
+    required: false
+    default: "true"
+  scan:
+    description: Whether to run Trivy vulnerability scan on the built image
+    required: false
+    default: "true"
+
+outputs:
+  image-uri:
+    description: Full image URI with digest (e.g., us-central1-docker.pkg.dev/project/repo/service@sha256:...)
+    value: ${{ steps.build-push.outputs.digest && format('{0}/{1}/{2}/{3}@{4}', inputs.gcp-region, 'docker.pkg.dev', inputs.gcp-project-id, format('{0}/{1}', inputs.registry-repository, inputs.service), steps.build-push.outputs.digest) || steps.build-push.outputs.image-ref }}
+  image-digest:
+    description: Image digest (sha256:...)
+    value: ${{ steps.build-push.outputs.digest }}
+  image-ref:
+    description: Image reference with tag (no digest)
+    value: ${{ steps.build-push.outputs.image-ref }}
+
+runs:
+  using: composite
+  steps:
+    # ------------------------------------------------------------------
+    # 1. Set up Docker Buildx for multi-platform builds
+    # ------------------------------------------------------------------
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      with:
+        driver: docker-container
+        driver-opts: |
+          image=moby/buildkit:v0.14.0
+          network=host
+
+    # ------------------------------------------------------------------
+    # 2. Configure Docker to authenticate with Artifact Registry
+    # ------------------------------------------------------------------
+    - name: Configure Docker for Artifact Registry
+      shell: bash
+      run: |
+        gcloud auth configure-docker \
+          ${{ inputs.gcp-region }}-docker.pkg.dev \
+          --quiet
+
+    # ------------------------------------------------------------------
+    # 3. Prepare image tags
+    # ------------------------------------------------------------------
+    - name: Prepare image metadata
+      id: meta
+      shell: bash
+      run: |
+        REGISTRY="${{ inputs.gcp-region }}-docker.pkg.dev/${{ inputs.gcp-project-id }}/${{ inputs.registry-repository }}"
+        IMAGE_BASE="${REGISTRY}/${{ inputs.service }}"
+        PRIMARY_TAG="${IMAGE_BASE}:${{ inputs.image-tag }}"
+
+        # Build list of tags for docker buildx --tag flags
+        TAGS="--tag ${PRIMARY_TAG}"
+        if [ -n "${{ inputs.additional-tags }}" ]; then
+          IFS=',' read -ra ADDL_TAGS <<< "${{ inputs.additional-tags }}"
+          for tag in "${ADDL_TAGS[@]}"; do
+            TAGS="${TAGS} --tag ${IMAGE_BASE}:${tag}"
+          done
+        fi
+
+        echo "registry=${REGISTRY}" >> "$GITHUB_OUTPUT"
+        echo "image-base=${IMAGE_BASE}" >> "$GITHUB_OUTPUT"
+        echo "primary-tag=${PRIMARY_TAG}" >> "$GITHUB_OUTPUT"
+        echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+        echo "build-date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+        echo "git-commit=$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')" >> "$GITHUB_OUTPUT"
+
+    # ------------------------------------------------------------------
+    # 4. Restore Docker layer cache
+    # ------------------------------------------------------------------
+    - name: Restore Docker layer cache
+      uses: actions/cache@v4
+      with:
+        path: /tmp/.buildx-cache
+        key: buildx-${{ inputs.service }}-${{ runner.os }}-${{ hashFiles(format('services/{0}/Dockerfile', inputs.service), format('services/{0}/pyproject.toml', inputs.service)) }}
+        restore-keys: |
+          buildx-${{ inputs.service }}-${{ runner.os }}-
+
+    # ------------------------------------------------------------------
+    # 5. Build (and optionally push) the Docker image
+    # ------------------------------------------------------------------
+    - name: Build and push Docker image
+      id: build-push
+      uses: docker/build-push-action@v5
+      with:
+        context: services/${{ inputs.service }}
+        file: services/${{ inputs.service }}/${{ inputs.dockerfile }}
+        target: ${{ inputs.target }}
+        platforms: ${{ inputs.platforms }}
+        push: ${{ inputs.push }}
+        tags: ${{ steps.meta.outputs.primary-tag }}
+        build-args: |
+          BUILD_DATE=${{ steps.meta.outputs.build-date }}
+          GIT_COMMIT=${{ steps.meta.outputs.git-commit }}
+          SERVICE_VERSION=${{ inputs.image-tag }}
+          ${{ inputs.build-args }}
+        cache-from: type=local,src=/tmp/.buildx-cache
+        cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+        labels: |
+          org.opencontainers.image.created=${{ steps.meta.outputs.build-date }}
+          org.opencontainers.image.revision=${{ github.sha }}
+          org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          com.agentic-infra.service=${{ inputs.service }}
+          com.agentic-infra.version=${{ inputs.image-tag }}
+        provenance: true
+        sbom: true
+
+    # Move cache to avoid unbounded growth
+    - name: Update Docker cache
+      shell: bash
+      run: |
+        rm -rf /tmp/.buildx-cache
+        mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+    # ------------------------------------------------------------------
+    # 6. Run Trivy vulnerability scan on the built image
+    # ------------------------------------------------------------------
+    - name: Run Trivy vulnerability scan
+      if: inputs.scan == 'true' && inputs.push == 'true'
+      uses: aquasecurity/trivy-action@0.20.0
+      with:
+        image-ref: ${{ steps.meta.outputs.primary-tag }}
+        format: sarif
+        output: trivy-results-${{ inputs.service }}.sarif
+        severity: CRITICAL,HIGH
+        exit-code: "0"  # don't fail the build; handled by security workflow
+        ignore-unfixed: true
+
+    - name: Upload Trivy scan results
+      if: inputs.scan == 'true' && inputs.push == 'true'
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: trivy-results-${{ inputs.service }}.sarif
+        category: trivy-${{ inputs.service }}
+
+    # ------------------------------------------------------------------
+    # 7. Write summary
+    # ------------------------------------------------------------------
+    - name: Write build summary
+      shell: bash
+      run: |
+        echo "### Docker Build: ${{ inputs.service }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+        echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Image | \`${{ steps.meta.outputs.primary-tag }}\` |" >> $GITHUB_STEP_SUMMARY
+        echo "| Digest | \`${{ steps.build-push.outputs.digest }}\` |" >> $GITHUB_STEP_SUMMARY
+        echo "| Platform | ${{ inputs.platforms }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Target stage | ${{ inputs.target }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Build date | ${{ steps.meta.outputs.build-date }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Git commit | ${{ steps.meta.outputs.git-commit }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Pushed | ${{ inputs.push }} |" >> $GITHUB_STEP_SUMMARY

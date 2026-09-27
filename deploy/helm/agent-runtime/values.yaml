@@ -1,0 +1,48 @@
+replicaCount: 2
+
+image:
+  repository: us-central1-docker.pkg.dev/PROJECT_ID/agentic-infra/agent-runtime
+  pullPolicy: IfNotPresent
+  tag: ""
+
+serviceAccount:
+  create: true
+  name: agentic-infra-agent-runtime
+  annotations:
+    iam.gke.io/gcp-service-account: agentic-infra-agent@PROJECT_ID.iam.gserviceaccount.com
+
+service:
+  type: ClusterIP
+  port: 8001
+
+resources:
+  limits:
+    cpu: "2"
+    memory: 4Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 8
+  targetCPUUtilizationPercentage: 60
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+env:
+  LOG_LEVEL: INFO
+  VERTEX_AI_LOCATION: us-central1
+
+envFrom:
+  - secretRef:
+      name: api-secrets
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true

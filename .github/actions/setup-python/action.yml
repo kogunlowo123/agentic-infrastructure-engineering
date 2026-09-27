@@ -1,0 +1,113 @@
+name: Setup Python with uv
+description: >
+  Sets up Python 3.12 using uv, configures dependency caching,
+  and installs dependencies from pyproject.toml for a given service.
+
+inputs:
+  service-directory:
+    description: >
+      Path to the service directory containing pyproject.toml.
+      Example: services/api
+    required: true
+  python-version:
+    description: Python version to install
+    required: false
+    default: "3.12"
+  uv-version:
+    description: uv version to install
+    required: false
+    default: "0.2.15"
+  install-extras:
+    description: >
+      Comma-separated list of optional dependency groups to install.
+      Leave empty to install all extras.
+    required: false
+    default: ""
+
+outputs:
+  python-path:
+    description: Path to the installed Python interpreter
+    value: ${{ steps.setup-python.outputs.python-path }}
+  cache-hit:
+    description: Whether the uv cache was a hit
+    value: ${{ steps.cache-uv.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    # ------------------------------------------------------------------
+    # 1. Install uv (fast Python package manager)
+    # ------------------------------------------------------------------
+    - name: Install uv
+      uses: astral-sh/setup-uv@v2
+      with:
+        version: ${{ inputs.uv-version }}
+        enable-cache: false  # we manage the cache ourselves below
+
+    # ------------------------------------------------------------------
+    # 2. Set up Python via uv (downloads and caches the interpreter)
+    # ------------------------------------------------------------------
+    - name: Set up Python ${{ inputs.python-version }}
+      id: setup-python
+      shell: bash
+      run: |
+        uv python install ${{ inputs.python-version }}
+        PYTHON_PATH=$(uv python find ${{ inputs.python-version }})
+        echo "python-path=${PYTHON_PATH}" >> "$GITHUB_OUTPUT"
+        echo "Using Python: ${PYTHON_PATH}"
+        ${PYTHON_PATH} --version
+
+    # ------------------------------------------------------------------
+    # 3. Restore uv cache (keyed on OS, Python version, and lock file)
+    # ------------------------------------------------------------------
+    - name: Restore uv cache
+      id: cache-uv
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/uv
+          ${{ inputs.service-directory }}/.venv
+        key: >-
+          uv-${{ runner.os }}-py${{ inputs.python-version }}-
+          ${{ hashFiles(format('{0}/uv.lock', inputs.service-directory),
+                        format('{0}/pyproject.toml', inputs.service-directory)) }}
+        restore-keys: |
+          uv-${{ runner.os }}-py${{ inputs.python-version }}-
+
+    # ------------------------------------------------------------------
+    # 4. Install project dependencies
+    # ------------------------------------------------------------------
+    - name: Install dependencies
+      shell: bash
+      working-directory: ${{ inputs.service-directory }}
+      env:
+        UV_PYTHON: ${{ inputs.python-version }}
+        UV_SYSTEM_PYTHON: "0"
+        UV_CACHE_DIR: ~/.cache/uv
+      run: |
+        if [ -n "${{ inputs.install-extras }}" ]; then
+          EXTRAS_FLAG=""
+          IFS=',' read -ra EXTRAS <<< "${{ inputs.install-extras }}"
+          for extra in "${EXTRAS[@]}"; do
+            EXTRAS_FLAG="${EXTRAS_FLAG} --extra ${extra}"
+          done
+          uv sync ${EXTRAS_FLAG}
+        else
+          uv sync --all-extras
+        fi
+
+    # ------------------------------------------------------------------
+    # 5. Verify installation
+    # ------------------------------------------------------------------
+    - name: Verify installation
+      shell: bash
+      working-directory: ${{ inputs.service-directory }}
+      run: |
+        echo "Installed packages:"
+        uv pip list
+        echo ""
+        echo "Python location:"
+        uv run python -c "import sys; print(sys.executable)"
+        echo ""
+        echo "Python version:"
+        uv run python --version

@@ -1,0 +1,140 @@
+name: Agent Capability Request
+description: Request a new capability, tool, or behavior for an existing agent — or propose a new agent
+title: "[Agent Request]: "
+labels:
+  - agent-capability
+  - enhancement
+assignees:
+  - kogunlowo123
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to request a new agent capability, a new tool for an existing agent, or propose an entirely new agent family.
+
+        Please be as specific as possible — the more context you provide, the faster we can evaluate and implement the request.
+
+  - type: dropdown
+    id: agent-family
+    attributes:
+      label: Target Agent Family
+      description: Which agent does this request apply to?
+      options:
+        - iac-generator — Terraform IaC generation from intent
+        - drift-detector — Infrastructure drift detection and remediation
+        - cost-optimizer — Cloud cost analysis and optimization
+        - "New agent (describe below)"
+    validations:
+      required: true
+
+  - type: input
+    id: new-agent-name
+    attributes:
+      label: New Agent Name (if proposing a new agent)
+      description: A short, hyphenated name for the new agent (e.g., `policy-enforcer`, `capacity-planner`)
+      placeholder: e.g., compliance-reporter
+    validations:
+      required: false
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use Case Description
+      description: |
+        Describe the use case or problem this capability addresses.
+        Include: who needs it, what they are currently doing without it, and what value the capability provides.
+      placeholder: |
+        As a platform engineer, I want the IaC generator to support Cloud Run service modules
+        so that I can provision serverless workloads with the same policy guardrails as GKE.
+        Currently I have to write this Terraform manually without organizational policy enforcement.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-behavior
+    attributes:
+      label: Proposed Behavior
+      description: Describe how the agent should behave with this new capability. Include example inputs and expected outputs where possible.
+      placeholder: |
+        When the user provides intent like "deploy a Cloud Run service for the payments team",
+        the iac-generator should:
+        1. Select the cloud-run-service template from the RAG corpus
+        2. Apply labels: team=payments, environment=<from constraints>
+        3. Default to VPC connector for private Cloud Run
+        4. Output main.tf, variables.tf, outputs.tf for the Cloud Run service
+        5. Pass checkov scan before creating the PR
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance Criteria
+      description: |
+        List the specific, testable criteria that must be met for this request to be considered complete.
+        Use "Given / When / Then" format or a numbered checklist.
+      placeholder: |
+        - [ ] Given a natural language intent mentioning Cloud Run, the agent selects the cloud-run module template
+        - [ ] The generated Terraform includes a VPC connector by default
+        - [ ] Required labels (team, environment, managed-by) are present on all resources
+        - [ ] Generated code passes checkov with no HIGH/CRITICAL findings
+        - [ ] A GitHub PR is created in the target infrastructure repository
+        - [ ] Integration test covers the happy path and policy violation path
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How critical is this capability?
+      options:
+        - "Critical — blocking production use"
+        - "High — significant impact on workflows"
+        - "Medium — useful improvement"
+        - "Low — nice to have"
+    validations:
+      required: true
+
+  - type: textarea
+    id: gcp-services
+    attributes:
+      label: GCP Services Involved
+      description: List any GCP services (APIs, resource types) this capability needs to interact with.
+      placeholder: |
+        - Cloud Run API (run.googleapis.com)
+        - Artifact Registry (for container images)
+        - VPC Connector (for private ingress)
+    validations:
+      required: false
+
+  - type: textarea
+    id: terraform-resources
+    attributes:
+      label: Relevant Terraform Resources
+      description: List relevant Terraform resource types or module sources, if known.
+      placeholder: |
+        - google_cloud_run_v2_service
+        - google_vpc_access_connector
+        - google_artifact_registry_repository
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Any additional context, links to relevant documentation, or examples from other platforms.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      options:
+        - label: I have searched existing issues and this request does not duplicate an open or closed issue
+          required: true
+        - label: This request is for agent behavior, not a platform bug (bugs go in the Bug Report template)
+          required: true

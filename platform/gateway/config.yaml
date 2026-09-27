@@ -1,0 +1,57 @@
+---
+# Platform gateway configuration
+# Manages LLM provider routing, rate limits, and budget enforcement
+
+gateway:
+  host: "0.0.0.0"
+  port: 8080
+  log_level: "INFO"
+  request_timeout_seconds: 120
+
+providers:
+  vertex_ai:
+    enabled: true
+    project: "${VERTEX_AI_PROJECT}"
+    location: "${VERTEX_AI_LOCATION:-us-central1}"
+    models:
+      - id: vertex_ai/gemini-1.5-pro
+        max_tokens: 32768
+        rpm_limit: 60
+        tpm_limit: 1000000
+      - id: vertex_ai/gemini-1.5-flash
+        max_tokens: 32768
+        rpm_limit: 120
+        tpm_limit: 2000000
+
+routing:
+  strategy: "tier_based"
+  rules:
+    - agent_tier: T2
+      primary: vertex_ai/gemini-1.5-pro
+      fallback: vertex_ai/gemini-1.5-flash
+    - agent_tier: T1
+      primary: vertex_ai/gemini-1.5-flash
+      fallback: vertex_ai/gemini-1.5-pro
+
+rate_limits:
+  per_tenant:
+    requests_per_minute: 30
+    tokens_per_minute: 500000
+  per_agent_family:
+    iac-generator:
+      requests_per_minute: 10
+    drift-detector:
+      requests_per_minute: 20
+    cost-optimizer:
+      requests_per_minute: 20
+
+budget:
+  default_monthly_limit_usd: 500.0
+  alert_threshold_pct: 80
+  hard_cutoff_pct: 100
+
+audit:
+  enabled: true
+  include_request_body: false
+  include_response_body: false
+  pii_scrub: true

@@ -1,0 +1,25 @@
+agent_id: iac-generator
+family: iac-generator
+tier: T2
+description: >
+  Generates Terraform HCL for GCP resources from structured requirements,
+  runs checkov security scan, creates GitHub PRs, and requires T2 human
+  approval before merge.
+model:
+  primary: vertex_ai/gemini-1.5-pro
+  fallback: vertex_ai/gemini-1.5-flash
+token_budget:
+  max_input_tokens: 32000
+  max_output_tokens: 8192
+  max_total_tokens_per_session: 128000
+ttl_seconds: 3600
+requires_approval: true
+scopes:
+  - iac:generate
+  - iac:read
+  - git:pr_create
+  - git:pr_read
+tools:
+  - TerraformGenerateTool
+  - RAGSearchTool
+  - GitPRCreateTool

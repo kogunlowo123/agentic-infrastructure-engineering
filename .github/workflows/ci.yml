@@ -1,0 +1,335 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+      - "CHANGELOG.md"
+      - "CODEOWNERS"
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+      - "CHANGELOG.md"
+      - "CODEOWNERS"
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  UV_VERSION: "0.2.15"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Determine which services changed (for selective job execution)
+  # ---------------------------------------------------------------------------
+  changes:
+    name: Detect Changed Services
+    runs-on: ubuntu-24.04
+    outputs:
+      api: ${{ steps.filter.outputs.api }}
+      agent-runtime: ${{ steps.filter.outputs.agent-runtime }}
+      rag-core: ${{ steps.filter.outputs.rag-core }}
+      any-service: ${{ steps.filter.outputs.any-service }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            api:
+              - 'services/api/**'
+            agent-runtime:
+              - 'services/agent-runtime/**'
+            rag-core:
+              - 'services/rag-core/**'
+            any-service:
+              - 'services/**'
+
+  # ---------------------------------------------------------------------------
+  # Lint all Python services
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Lint — ${{ matrix.service }}
+    runs-on: ubuntu-24.04
+    needs: changes
+    if: needs.changes.outputs.any-service == 'true' || github.event_name == 'push'
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - api
+          - agent-runtime
+          - rag-core
+        python-version:
+          - "3.12"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: ./.github/actions/setup-python
+        with:
+          service-directory: services/${{ matrix.service }}
+          python-version: ${{ matrix.python-version }}
+          uv-version: ${{ env.UV_VERSION }}
+
+      - name: Run ruff (lint)
+        working-directory: services/${{ matrix.service }}
+        run: uv run ruff check src/ tests/ --output-format=github
+
+      - name: Run ruff (format check)
+        working-directory: services/${{ matrix.service }}
+        run: uv run ruff format --check src/ tests/
+
+      - name: Run black (format check)
+        working-directory: services/${{ matrix.service }}
+        run: uv run black --check src/ tests/
+
+  # ---------------------------------------------------------------------------
+  # Type checking
+  # ---------------------------------------------------------------------------
+  typecheck:
+    name: Typecheck — ${{ matrix.service }}
+    runs-on: ubuntu-24.04
+    needs: changes
+    if: needs.changes.outputs.any-service == 'true' || github.event_name == 'push'
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - api
+          - agent-runtime
+          - rag-core
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: ./.github/actions/setup-python
+        with:
+          service-directory: services/${{ matrix.service }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          uv-version: ${{ env.UV_VERSION }}
+
+      - name: Run mypy
+        working-directory: services/${{ matrix.service }}
+        run: uv run mypy --strict src/
+
+  # ---------------------------------------------------------------------------
+  # Unit tests
+  # ---------------------------------------------------------------------------
+  test-unit:
+    name: Unit Tests — ${{ matrix.service }} (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-24.04
+    needs: changes
+    if: needs.changes.outputs.any-service == 'true' || github.event_name == 'push'
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - api
+          - agent-runtime
+          - rag-core
+        python-version:
+          - "3.12"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: ./.github/actions/setup-python
+        with:
+          service-directory: services/${{ matrix.service }}
+          python-version: ${{ matrix.python-version }}
+          uv-version: ${{ env.UV_VERSION }}
+
+      - name: Run unit tests
+        working-directory: services/${{ matrix.service }}
+        env:
+          ENVIRONMENT: test
+          LOG_LEVEL: WARNING
+          # Provide minimal test config (no real external services)
+          DATABASE_URL: "postgresql+asyncpg://test:test@localhost:5432/test_db"
+          REDIS_URL: "redis://localhost:6379/15"
+          JWT_SECRET_KEY: "test-secret-key-minimum-32-characters-long"
+          GCP_PROJECT_ID: "test-project"
+          GCP_REGION: "us-central1"
+        run: |
+          uv run pytest tests/unit/ \
+            -v \
+            --tb=short \
+            --cov=src \
+            --cov-report=xml:coverage-${{ matrix.service }}.xml \
+            --cov-report=term-missing \
+            --cov-fail-under=80 \
+            -m "not integration" \
+            --junit-xml=junit-${{ matrix.service }}.xml
+
+      - name: Upload coverage report
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: services/${{ matrix.service }}/coverage-${{ matrix.service }}.xml
+          flags: ${{ matrix.service }},unit
+          name: unit-${{ matrix.service }}-py${{ matrix.python-version }}
+          fail_ci_if_error: false
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-${{ matrix.service }}-py${{ matrix.python-version }}
+          path: services/${{ matrix.service }}/junit-${{ matrix.service }}.xml
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # Integration tests (run against Docker Compose stack)
+  # ---------------------------------------------------------------------------
+  test-integration:
+    name: Integration Tests — ${{ matrix.service }}
+    runs-on: ubuntu-24.04
+    needs: [changes, test-unit]
+    if: needs.changes.outputs.any-service == 'true' || github.event_name == 'push'
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - api
+          - agent-runtime
+          - rag-core
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: agentic
+          POSTGRES_PASSWORD: agentic_test_password
+          POSTGRES_DB: agentic_test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agentic -d agentic_test_db"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7.2-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      opensearch:
+        image: opensearchproject/opensearch:2.13.0
+        env:
+          discovery.type: single-node
+          DISABLE_SECURITY_PLUGIN: "true"
+          OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+        ports:
+          - 9200:9200
+        options: >-
+          --health-cmd "curl -f http://localhost:9200/_cluster/health"
+          --health-interval 20s
+          --health-timeout 10s
+          --health-retries 10
+          --health-start-period 60s
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: ./.github/actions/setup-python
+        with:
+          service-directory: services/${{ matrix.service }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          uv-version: ${{ env.UV_VERSION }}
+
+      - name: Run database migrations
+        working-directory: services/api
+        env:
+          DATABASE_URL: "postgresql+asyncpg://agentic:agentic_test_password@localhost:5432/agentic_test_db"
+        run: uv run alembic upgrade head
+
+      - name: Run integration tests
+        working-directory: services/${{ matrix.service }}
+        env:
+          ENVIRONMENT: test
+          LOG_LEVEL: WARNING
+          DATABASE_URL: "postgresql+asyncpg://agentic:agentic_test_password@localhost:5432/agentic_test_db"
+          REDIS_URL: "redis://localhost:6379/15"
+          OPENSEARCH_URL: "http://localhost:9200"
+          JWT_SECRET_KEY: "integration-test-secret-key-minimum-32-chars"
+          GCP_PROJECT_ID: "test-project"
+          GCP_REGION: "us-central1"
+          # Use mock Vertex AI in integration tests
+          VERTEX_AI_MOCK: "true"
+        run: |
+          uv run pytest tests/integration/ \
+            -v \
+            --tb=short \
+            --cov=src \
+            --cov-report=xml:coverage-integration-${{ matrix.service }}.xml \
+            -m integration \
+            --junit-xml=junit-integration-${{ matrix.service }}.xml
+
+      - name: Upload integration coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: services/${{ matrix.service }}/coverage-integration-${{ matrix.service }}.xml
+          flags: ${{ matrix.service }},integration
+          name: integration-${{ matrix.service }}
+          fail_ci_if_error: false
+
+      - name: Upload integration test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-integration-${{ matrix.service }}
+          path: services/${{ matrix.service }}/junit-integration-${{ matrix.service }}.xml
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # CI status gate (required branch protection check)
+  # ---------------------------------------------------------------------------
+  ci-passed:
+    name: CI Passed
+    runs-on: ubuntu-24.04
+    needs:
+      - lint
+      - typecheck
+      - test-unit
+      - test-integration
+    if: always()
+    steps:
+      - name: Check all jobs passed
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            echo "One or more CI jobs failed."
+            exit 1
+          fi
+          if [[ "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "One or more CI jobs were cancelled."
+            exit 1
+          fi
+          echo "All CI jobs passed."

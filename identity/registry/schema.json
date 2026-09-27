@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-infra-engineering/identity/registry/schema.json",
+  "title": "AgentIdentity",
+  "description": "Schema for agent identity registry entries",
+  "type": "object",
+  "required": ["agent_id", "family", "tier", "scopes", "model"],
+  "properties": {
+    "agent_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{2,63}$",
+      "description": "Unique agent identifier (kebab-case)"
+    },
+    "family": {
+      "type": "string",
+      "enum": ["iac-generator", "drift-detector", "cost-optimizer"],
+      "description": "Agent family classification"
+    },
+    "tier": {
+      "type": "string",
+      "enum": ["T1", "T2"],
+      "description": "Trust tier. T2 requires human approval gate"
+    },
+    "scopes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "iac:generate",
+          "iac:read",
+          "drift:detect",
+          "drift:read",
+          "cost:forecast",
+          "cost:read",
+          "git:pr_create",
+          "git:pr_read"
+        ]
+      },
+      "minItems": 1,
+      "description": "Authorized capability scopes"
+    },
+    "model": {
+      "type": "object",
+      "required": ["primary", "fallback"],
+      "properties": {
+        "primary": {
+          "type": "string",
+          "description": "Primary LLM model identifier (LiteLLM format)"
+        },
+        "fallback": {
+          "type": "string",
+          "description": "Fallback LLM model identifier"
+        }
+      }
+    },
+    "token_budget": {
+      "type": "object",
+      "properties": {
+        "max_input_tokens": {"type": "integer", "minimum": 1000},
+        "max_output_tokens": {"type": "integer", "minimum": 100},
+        "max_total_tokens_per_session": {"type": "integer", "minimum": 1000}
+      }
+    },
+    "ttl_seconds": {
+      "type": "integer",
+      "minimum": 60,
+      "maximum": 86400,
+      "description": "Session TTL in seconds"
+    },
+    "tools": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "List of tool names this agent may invoke"
+    },
+    "requires_approval": {
+      "type": "boolean",
+      "description": "Whether T2 approval gate is required for outputs"
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 500
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,19 @@
+apiVersion: v2
+name: agentic-infra
+description: Umbrella chart for Agentic Infrastructure Engineering Platform
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+dependencies:
+  - name: agentic-infra-api
+    version: "0.1.0"
+    repository: "file://../api"
+    condition: api.enabled
+  - name: agentic-infra-agent-runtime
+    version: "0.1.0"
+    repository: "file://../agent-runtime"
+    condition: agentRuntime.enabled
+home: https://github.com/kogunlowo123/agentic-infrastructure-engineering
+maintainers:
+  - name: kogunlowo123
+    email: kogunlowo@gmail.com

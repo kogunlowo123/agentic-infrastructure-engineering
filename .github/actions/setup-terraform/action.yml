@@ -1,0 +1,133 @@
+name: Setup Terraform with GCP WIF
+description: >
+  Sets up Terraform, configures GCP credentials via Workload Identity Federation,
+  and optionally initializes a Terraform working directory.
+
+inputs:
+  terraform-version:
+    description: Terraform version to install (semver or 'latest')
+    required: false
+    default: "1.8.5"
+  working-directory:
+    description: Terraform working directory (environment directory)
+    required: false
+    default: ""
+  gcp-workload-identity-provider:
+    description: >
+      Full resource name of the Workload Identity Provider.
+      Format: projects/<project-number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>
+    required: true
+  gcp-service-account:
+    description: Service account email to impersonate via WIF
+    required: true
+  terraform-init:
+    description: Whether to run terraform init after setup
+    required: false
+    default: "false"
+  backend-config:
+    description: >
+      Optional comma-separated list of backend config values to pass to terraform init.
+      Example: "bucket=my-tf-state,prefix=production"
+    required: false
+    default: ""
+
+outputs:
+  terraform-version:
+    description: The Terraform version that was installed
+    value: ${{ steps.setup-tf.outputs.terraform_version }}
+  gcp-access-token:
+    description: The GCP access token obtained via WIF (masked in logs)
+    value: ${{ steps.auth.outputs.access_token }}
+
+runs:
+  using: composite
+  steps:
+    # ------------------------------------------------------------------
+    # 1. Install Terraform
+    # ------------------------------------------------------------------
+    - name: Install Terraform ${{ inputs.terraform-version }}
+      id: setup-tf
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ inputs.terraform-version }}
+        terraform_wrapper: true  # enables ::set-output for plan steps
+
+    - name: Verify Terraform version
+      shell: bash
+      run: terraform version
+
+    # ------------------------------------------------------------------
+    # 2. Authenticate to GCP via Workload Identity Federation
+    #    No service account key files are created or stored.
+    # ------------------------------------------------------------------
+    - name: Authenticate to GCP via WIF
+      id: auth
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ inputs.gcp-workload-identity-provider }}
+        service_account: ${{ inputs.gcp-service-account }}
+        # Export Application Default Credentials so Terraform Google provider picks them up
+        export_environment_variables: true
+        # Create a credentials file for tools that need GOOGLE_APPLICATION_CREDENTIALS
+        create_credentials_file: true
+
+    # ------------------------------------------------------------------
+    # 3. Set up gcloud CLI (for gcs backend authentication)
+    # ------------------------------------------------------------------
+    - name: Set up gcloud
+      uses: google-github-actions/setup-gcloud@v2
+
+    # ------------------------------------------------------------------
+    # 4. Configure Terraform GCS backend authentication
+    #    Uses Application Default Credentials from WIF auth step.
+    # ------------------------------------------------------------------
+    - name: Configure GCS backend credentials
+      shell: bash
+      run: |
+        # Ensure Terraform can authenticate to the GCS backend
+        gcloud auth application-default print-access-token > /dev/null 2>&1 && \
+          echo "GCP ADC configured successfully." || \
+          echo "WARNING: GCP ADC not configured. Backend operations may fail."
+
+    # ------------------------------------------------------------------
+    # 5. Optionally initialize Terraform
+    # ------------------------------------------------------------------
+    - name: Terraform init
+      if: inputs.terraform-init == 'true' && inputs.working-directory != ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        BACKEND_ARGS=""
+        if [ -n "${{ inputs.backend-config }}" ]; then
+          IFS=',' read -ra CONFIGS <<< "${{ inputs.backend-config }}"
+          for config in "${CONFIGS[@]}"; do
+            BACKEND_ARGS="${BACKEND_ARGS} -backend-config=${config}"
+          done
+        fi
+
+        terraform init \
+          -input=false \
+          -no-color \
+          ${BACKEND_ARGS}
+
+    - name: Terraform init (no working-directory)
+      if: inputs.terraform-init == 'true' && inputs.working-directory == ''
+      shell: bash
+      run: |
+        terraform init \
+          -input=false \
+          -no-color
+
+    # ------------------------------------------------------------------
+    # 6. Output summary
+    # ------------------------------------------------------------------
+    - name: Summary
+      shell: bash
+      run: |
+        echo "### Terraform Setup Complete" >> $GITHUB_STEP_SUMMARY
+        echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+        echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Terraform Version | $(terraform version -json | python3 -c 'import sys,json; print(json.load(sys.stdin)[\"terraform_version\"])') |" >> $GITHUB_STEP_SUMMARY
+        echo "| GCP Service Account | ${{ inputs.gcp-service-account }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Auth Method | Workload Identity Federation |" >> $GITHUB_STEP_SUMMARY
+        echo "| Working Directory | ${{ inputs.working-directory || '(not set)' }} |" >> $GITHUB_STEP_SUMMARY

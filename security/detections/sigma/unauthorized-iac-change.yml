@@ -1,0 +1,33 @@
+title: Unauthorized IaC Change Detected
+id: 7f3b2a1c-8e4d-4f5a-9b6c-0d1e2f3a4b5c
+status: production
+description: >
+  Detects unauthorized changes to Terraform state or IaC files outside
+  of approved CI/CD workflows.
+author: Agentic Infrastructure Engineering
+date: 2024-01-01
+references:
+  - https://attack.mitre.org/techniques/T1578/
+tags:
+  - attack.defense_evasion
+  - attack.t1578
+  - iac
+  - terraform
+logsource:
+  category: cloud
+  product: gcp
+  service: cloud_audit
+detection:
+  selection:
+    protoPayload.serviceName: "storage.googleapis.com"
+    protoPayload.methodName|startswith: "storage.objects.create"
+    protoPayload.resourceName|contains: ".tfstate"
+  filter_ci:
+    protoPayload.authenticationInfo.principalEmail|endswith:
+      - "@cloudbuild.gserviceaccount.com"
+      - "-compute@developer.gserviceaccount.com"
+  condition: selection and not filter_ci
+falsepositives:
+  - Legitimate manual Terraform runs by authorized engineers
+  - Initial bootstrap operations
+level: high

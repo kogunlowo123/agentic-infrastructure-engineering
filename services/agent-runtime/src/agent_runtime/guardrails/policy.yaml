@@ -1,0 +1,25 @@
+policies:
+  iac_generation:
+    max_resource_count_per_request: 50
+    allowed_cloud_providers:
+      - gcp
+    blocked_resource_types:
+      - google_compute_instance_with_external_ip
+    require_labels:
+      - environment
+      - managed-by
+    require_versioning_for_buckets: true
+    deny_public_access: true
+    max_disk_size_gb: 10000
+    allowed_regions:
+      - us-central1
+      - us-east1
+      - europe-west1
+
+  security:
+    block_on_critical_findings: true
+    block_on_high_count_threshold: 3
+    required_checkov_checks:
+      - CKV_GCP_29  # GCS uniform bucket-level access
+      - CKV_GCP_62  # GCS logging enabled
+      - CKV_GCP_78  # Cloud SQL public IP disabled

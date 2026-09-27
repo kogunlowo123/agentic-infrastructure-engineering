@@ -1,0 +1,61 @@
+---
+# LLM routing rules for the platform gateway
+
+version: "1.0"
+
+routes:
+  - name: iac-generator-primary
+    match:
+      agent_family: "iac-generator"
+      request_type: "generate"
+    target:
+      provider: vertex_ai
+      model: vertex_ai/gemini-1.5-pro
+    options:
+      temperature: 0.1
+      max_tokens: 8192
+      top_p: 0.95
+
+  - name: iac-generator-fallback
+    match:
+      agent_family: "iac-generator"
+      conditions:
+        - type: provider_error
+          codes: [429, 503]
+    target:
+      provider: vertex_ai
+      model: vertex_ai/gemini-1.5-flash
+    options:
+      temperature: 0.1
+      max_tokens: 8192
+
+  - name: drift-detector-default
+    match:
+      agent_family: "drift-detector"
+    target:
+      provider: vertex_ai
+      model: vertex_ai/gemini-1.5-flash
+    options:
+      temperature: 0.0
+      max_tokens: 4096
+
+  - name: cost-optimizer-default
+    match:
+      agent_family: "cost-optimizer"
+    target:
+      provider: vertex_ai
+      model: vertex_ai/gemini-1.5-flash
+    options:
+      temperature: 0.0
+      max_tokens: 4096
+
+retry:
+  max_attempts: 3
+  backoff_multiplier: 2.0
+  initial_delay_ms: 500
+  retryable_status_codes: [429, 503, 504]
+
+circuit_breaker:
+  failure_threshold: 5
+  recovery_timeout_seconds: 60
+  half_open_max_calls: 2

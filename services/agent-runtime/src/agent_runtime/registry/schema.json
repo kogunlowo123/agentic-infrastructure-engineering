@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AgentRegistration",
+  "type": "object",
+  "required": ["id", "name", "tier", "tools"],
+  "properties": {
+    "id": {"type": "string", "description": "Unique agent identifier"},
+    "name": {"type": "string", "description": "Human-readable agent name"},
+    "tier": {"type": "string", "enum": ["T1", "T2"], "description": "Agent trust tier"},
+    "description": {"type": "string"},
+    "model": {"type": "string", "description": "LiteLLM model identifier"},
+    "tools": {"type": "array", "items": {"type": "string"}},
+    "max_token_budget": {"type": "integer", "minimum": 1000},
+    "requires_approval": {"type": "boolean"},
+    "cloud_provider": {"type": "string", "default": "gcp"}
+  }
+}

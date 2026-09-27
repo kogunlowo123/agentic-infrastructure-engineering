@@ -1,0 +1,164 @@
+# .pre-commit-config.yaml
+# Pre-commit hook configuration for Agentic Infrastructure Engineering
+#
+# Install: pre-commit install
+# Run manually: pre-commit run --all-files
+# Update hooks: pre-commit autoupdate
+
+minimum_pre_commit_version: "3.0.0"
+
+default_language_version:
+  python: python3.12
+
+repos:
+  # ---------------------------------------------------------------------------
+  # General file hygiene
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+        exclude: "^(.env.*|.*\\.tfstate|.*\\.tfstate\\.backup)$"
+      - id: check-yaml
+        args: [--unsafe]
+        exclude: "^infra/kubernetes/"
+      - id: check-json
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: detect-private-key
+      - id: no-commit-to-branch
+        args: [--branch=main, --branch=develop]
+
+  # ---------------------------------------------------------------------------
+  # Python — Ruff (linter + import sorter, replaces flake8/isort/pyupgrade)
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.8
+    hooks:
+      - id: ruff
+        name: ruff (lint)
+        args: [--fix, --exit-non-zero-on-fix]
+        types_or: [python, pyi]
+        files: ^services/
+      - id: ruff-format
+        name: ruff (format)
+        types_or: [python, pyi]
+        files: ^services/
+
+  # ---------------------------------------------------------------------------
+  # Python — Black (code formatter)
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/psf/black
+    rev: 24.4.2
+    hooks:
+      - id: black
+        name: black
+        language_version: python3.12
+        types_or: [python, pyi]
+        files: ^services/
+
+  # ---------------------------------------------------------------------------
+  # Python — Mypy (static type checker)
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.10.0
+    hooks:
+      - id: mypy
+        name: mypy
+        files: ^services/(api|agent-runtime|rag-core)/src/
+        args:
+          - --strict
+          - --ignore-missing-imports
+          - --no-error-summary
+        additional_dependencies:
+          - types-redis
+          - types-requests
+          - pydantic>=2.0
+          - fastapi>=0.111
+          - sqlalchemy[mypy]>=2.0
+
+  # ---------------------------------------------------------------------------
+  # Terraform — hashicorp/setup-terraform fmt and validate
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.92.0
+    hooks:
+      - id: terraform_fmt
+        name: terraform fmt
+        files: \.tf$
+      - id: terraform_validate
+        name: terraform validate
+        files: \.tf$
+        args:
+          - --hook-config=--retry-once-with-cleanup=true
+      - id: terraform_docs
+        name: terraform-docs
+        args:
+          - --hook-config=--path-to-file=README.md
+          - --hook-config=--add-to-existing-file=true
+          - --hook-config=--create-file-if-not-exist=true
+        files: ^infra/gcp/modules/
+
+  # ---------------------------------------------------------------------------
+  # Terraform — Checkov IaC security scanner
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/bridgecrewio/checkov
+    rev: "3.2.90"
+    hooks:
+      - id: checkov
+        name: checkov (terraform)
+        files: \.tf$
+        args:
+          - --framework=terraform
+          - --quiet
+          - --compact
+          - --skip-check=CKV_TF_1  # module pinning — enforced via Dependabot instead
+
+  # ---------------------------------------------------------------------------
+  # Docker — Hadolint Dockerfile linter
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.12.0
+    hooks:
+      - id: hadolint-docker
+        name: hadolint (dockerfile lint)
+        args:
+          - --ignore=DL3008  # apt-get without version pins (acceptable in multi-stage builds)
+          - --ignore=DL3009  # apt-get cleanup (handled in multi-stage final stage)
+
+  # ---------------------------------------------------------------------------
+  # YAML — yamllint
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.35.1
+    hooks:
+      - id: yamllint
+        name: yamllint
+        args:
+          - --config-data
+          - "{extends: relaxed, rules: {line-length: {max: 120}, truthy: {allowed-values: ['true', 'false']}}}"
+        exclude: "^infra/kubernetes/"
+
+  # ---------------------------------------------------------------------------
+  # Shell — shellcheck
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+      - id: shellcheck
+        name: shellcheck
+        files: \.(sh|bash)$
+
+  # ---------------------------------------------------------------------------
+  # Secrets detection — gitleaks
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/zricethezav/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks
+        name: gitleaks (secret detection)

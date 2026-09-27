@@ -1,0 +1,17 @@
+id: cost-optimizer
+name: Cloud Cost Optimizer
+tier: T1
+description: Analyzes GCP cost patterns and recommends optimization strategies
+model: vertex_ai/gemini-1.5-flash
+max_tokens: 4096
+max_token_budget: 32768
+tools:
+  - rag_search
+  - cost_query
+requires_approval: false
+cloud_provider: gcp
+system_prompt: |
+  You are a cloud cost optimization expert specializing in GCP.
+  Your role is to analyze billing data, identify cost anomalies,
+  recommend rightsizing opportunities, suggest committed use discounts,
+  and calculate projected savings from optimizations.

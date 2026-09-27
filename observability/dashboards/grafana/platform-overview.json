@@ -1,0 +1,80 @@
+{
+  "title": "Agentic Infrastructure Engineering - Platform Overview",
+  "uid": "agentic-infra-overview",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "API Request Rate",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(http_server_requests_total{namespace=\"agentic-infra\"}[5m])) by (handler, method)",
+          "legendFormat": "{{method}} {{handler}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "API P95 Latency (ms)",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket{namespace=\"agentic-infra\"}[5m])) by (le, handler)) * 1000",
+          "legendFormat": "p95 {{handler}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Agent Sessions Active",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 8, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "expr": "sum(agent_sessions_active{namespace=\"agentic-infra\"})"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "T2 Approvals Pending",
+      "type": "stat",
+      "gridPos": { "x": 6, "y": 8, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "expr": "sum(agent_approvals_pending{namespace=\"agentic-infra\", tier=\"T2\"})"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "LLM Token Usage (5m rate)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(llm_tokens_total{namespace=\"agentic-infra\"}[5m])) by (model, type)",
+          "legendFormat": "{{model}} {{type}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Drift Detections (1h)",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum(increase(drift_detections_total{namespace=\"agentic-infra\"}[1h])) by (severity)",
+          "legendFormat": "{{severity}}"
+        }
+      ]
+    }
+  ]
+}

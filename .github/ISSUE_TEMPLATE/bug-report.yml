@@ -1,0 +1,153 @@
+name: Bug Report
+description: Report a defect or unexpected behavior in the platform
+title: "[Bug]: "
+labels:
+  - bug
+  - triage
+assignees:
+  - kogunlowo123
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a bug! Please complete this form as thoroughly as possible to help us reproduce and fix the issue quickly.
+
+        > **Security vulnerabilities** should NOT be reported here. Please see [SECURITY.md](../SECURITY.md) for private reporting instructions.
+
+  - type: dropdown
+    id: affected-component
+    attributes:
+      label: Affected Component
+      description: Which part of the platform is affected?
+      multiple: true
+      options:
+        - API Gateway (services/api)
+        - Agent Runtime (services/agent-runtime)
+        - RAG Core (services/rag-core)
+        - IaC Generator Agent
+        - Drift Detector Agent
+        - Cost Optimizer Agent
+        - Terraform / Infrastructure (infra/)
+        - CI/CD Pipelines (.github/workflows/)
+        - Docker / docker-compose
+        - Documentation
+        - Other (describe below)
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Platform Version
+      description: What version of the platform are you running? (check `VERSION` file or image tag)
+      placeholder: "e.g., 0.1.0 or sha-abc1234"
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python Version
+      description: Output of `python --version`
+      placeholder: "e.g., Python 3.12.3"
+    validations:
+      required: false
+
+  - type: input
+    id: terraform-version
+    attributes:
+      label: Terraform Version
+      description: Output of `terraform version` (if the bug involves Terraform)
+      placeholder: "e.g., Terraform v1.8.3 / provider registry.terraform.io/hashicorp/google v5.28.0"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      description: Where did you encounter the bug?
+      options:
+        - Local development (Docker Compose)
+        - GKE dev
+        - GKE staging
+        - GKE production
+        - CI/CD pipeline
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: gcp-context
+    attributes:
+      label: GCP Context
+      description: |
+        Provide relevant GCP context (project ID, region, affected service).
+        **Do not include credentials or sensitive project IDs.**
+      placeholder: |
+        GCP Region: us-central1
+        Affected GCP Service: Cloud SQL / GKE / Vertex AI
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: Provide clear, numbered steps to reproduce the issue.
+      placeholder: |
+        1. Start the local dev stack with `make dev`
+        2. Call `POST /v1/agents/iac-generator/run` with the following payload: ...
+        3. Observe the response
+        4. Expected: ...
+        5. Actual: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: Actual Behavior
+      description: What actually happened? Include error messages, stack traces, and relevant logs.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs
+      description: |
+        Paste any relevant log output. **Redact all secrets, API keys, and personal data before posting.**
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Any other information that might help diagnose the issue (screenshots, request/response payloads, etc.)
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      options:
+        - label: I have searched existing issues to ensure this is not a duplicate
+          required: true
+        - label: I have redacted all secrets, API keys, and personal data from this report
+          required: true
+        - label: This is not a security vulnerability (security issues go to kogunlowo@gmail.com)
+          required: true

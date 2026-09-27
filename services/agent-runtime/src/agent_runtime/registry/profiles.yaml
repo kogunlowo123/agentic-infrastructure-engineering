@@ -1,0 +1,21 @@
+profiles:
+  vertex-ai-gemini-1.5-pro:
+    model: vertex_ai/gemini-1.5-pro
+    max_tokens: 8192
+    temperature: 0.2
+    rate_limit_rpm: 60
+    preferred_for: [iac_generation]
+
+  vertex-ai-gemini-flash:
+    model: vertex_ai/gemini-1.5-flash
+    max_tokens: 4096
+    temperature: 0.1
+    rate_limit_rpm: 120
+    preferred_for: [drift_detection, cost_optimization]
+
+  fallback:
+    model: vertex_ai/gemini-1.5-flash
+    max_tokens: 2048
+    temperature: 0.1
+    rate_limit_rpm: 60
+    preferred_for: [default]

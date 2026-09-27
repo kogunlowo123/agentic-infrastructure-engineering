@@ -1,0 +1,28 @@
+# CODEOWNERS
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# Each line is a file pattern followed by one or more owners.
+# Order matters: the last matching pattern takes precedence.
+
+# Global owner — @kogunlowo123 owns everything by default
+*                               @kogunlowo123
+
+# Infrastructure (Terraform)
+/infra/                         @kogunlowo123
+/infra/gcp/                     @kogunlowo123
+/infra/kubernetes/              @kogunlowo123
+
+# Core services
+/services/api/                  @kogunlowo123
+/services/agent-runtime/        @kogunlowo123
+/services/rag-core/             @kogunlowo123
+
+# CI/CD workflows — require owner review on any pipeline changes
+/.github/workflows/             @kogunlowo123
+/.github/actions/               @kogunlowo123
+
+# Security-sensitive files — always require owner review
+/SECURITY.md                    @kogunlowo123
+/.pre-commit-config.yaml        @kogunlowo123
+/docker-compose.yml             @kogunlowo123
+/.env.example                   @kogunlowo123

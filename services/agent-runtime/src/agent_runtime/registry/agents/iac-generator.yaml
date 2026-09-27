@@ -1,0 +1,19 @@
+id: iac-generator
+name: IaC Generator Agent
+tier: T2
+description: Generates Terraform IaC from natural language requirements, runs security scanning, and creates PRs
+model: vertex_ai/gemini-1.5-pro
+max_tokens: 8192
+max_token_budget: 131072
+tools:
+  - rag_search
+  - terraform_generate
+  - git_pr_create
+requires_approval: true
+cloud_provider: gcp
+system_prompt: |
+  You are an expert Terraform infrastructure engineer specializing in GCP.
+  Your role is to generate production-ready Terraform HCL code from user requirements.
+  Always follow security best practices, use latest stable provider versions,
+  include proper resource labeling, and never hardcode sensitive values.
+  All generated infrastructure must comply with organizational security policies.

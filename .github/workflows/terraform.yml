@@ -1,0 +1,311 @@
+name: Terraform
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "infra/**"
+      - ".github/workflows/terraform.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "infra/**"
+      - ".github/workflows/terraform.yml"
+
+concurrency:
+  # Serialize Terraform operations per environment to prevent state conflicts
+  group: terraform-${{ github.ref }}
+  cancel-in-progress: false  # don't cancel in-flight Terraform operations
+
+permissions:
+  contents: read
+  id-token: write      # required for WIF authentication
+  pull-requests: write # required to post plan comments on PRs
+
+env:
+  TF_VERSION: "1.8.5"
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TF_NO_COLOR: "true"
+
+  # GCP Workload Identity Federation (set these as GitHub Actions secrets)
+  GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+  GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Format check — runs on all PRs and pushes
+  # ---------------------------------------------------------------------------
+  terraform-fmt:
+    name: Terraform Format Check
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform fmt check
+        id: fmt
+        run: terraform fmt -check -recursive infra/
+        continue-on-error: true
+
+      - name: Post fmt comment
+        if: github.event_name == 'pull_request' && steps.fmt.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '❌ **Terraform format check failed.**\n\nRun `make terraform-fmt` locally to fix formatting issues.'
+            })
+
+      - name: Fail on fmt errors
+        if: steps.fmt.outcome == 'failure'
+        run: exit 1
+
+  # ---------------------------------------------------------------------------
+  # Validate all Terraform environments
+  # ---------------------------------------------------------------------------
+  terraform-validate:
+    name: Terraform Validate — ${{ matrix.environment }}
+    runs-on: ubuntu-24.04
+    needs: terraform-fmt
+    strategy:
+      fail-fast: false
+      matrix:
+        environment:
+          - dev
+          - staging
+          - production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform and GCP auth
+        uses: ./.github/actions/setup-terraform
+        with:
+          terraform-version: ${{ env.TF_VERSION }}
+          gcp-workload-identity-provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          gcp-service-account: ${{ env.GCP_SERVICE_ACCOUNT }}
+          working-directory: infra/gcp/environments/${{ matrix.environment }}
+          terraform-init: "true"
+
+      - name: Terraform validate
+        working-directory: infra/gcp/environments/${{ matrix.environment }}
+        run: terraform validate
+
+  # ---------------------------------------------------------------------------
+  # Plan — runs on PRs to generate plan output for review
+  # ---------------------------------------------------------------------------
+  terraform-plan:
+    name: Terraform Plan — ${{ matrix.environment }}
+    runs-on: ubuntu-24.04
+    needs: terraform-validate
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        environment:
+          - dev
+          - staging
+          - production
+
+    env:
+      PLAN_FILE: ${{ matrix.environment }}.tfplan
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform and GCP auth
+        uses: ./.github/actions/setup-terraform
+        with:
+          terraform-version: ${{ env.TF_VERSION }}
+          gcp-workload-identity-provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          gcp-service-account: ${{ env.GCP_SERVICE_ACCOUNT }}
+          working-directory: infra/gcp/environments/${{ matrix.environment }}
+          terraform-init: "true"
+
+      - name: Terraform plan
+        id: plan
+        working-directory: infra/gcp/environments/${{ matrix.environment }}
+        run: |
+          terraform plan \
+            -out="${{ env.PLAN_FILE }}" \
+            -detailed-exitcode \
+            2>&1 | tee plan-output.txt
+          echo "exit-code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      - name: Save plan output
+        uses: actions/upload-artifact@v4
+        with:
+          name: tf-plan-${{ matrix.environment }}
+          path: |
+            infra/gcp/environments/${{ matrix.environment }}/${{ env.PLAN_FILE }}
+            infra/gcp/environments/${{ matrix.environment }}/plan-output.txt
+          retention-days: 7
+
+      - name: Post plan comment on PR
+        uses: actions/github-script@v7
+        if: always()
+        with:
+          script: |
+            const fs = require('fs');
+            const planOutput = fs.readFileSync(
+              'infra/gcp/environments/${{ matrix.environment }}/plan-output.txt', 'utf8'
+            );
+
+            // Truncate very long plans to avoid GitHub comment limits
+            const maxLen = 60000;
+            const truncated = planOutput.length > maxLen
+              ? planOutput.substring(0, maxLen) + '\n\n... (truncated — see full plan in workflow artifacts)'
+              : planOutput;
+
+            const exitCode = '${{ steps.plan.outputs.exit-code }}';
+            const status = exitCode === '0' ? '✅ No changes' :
+                           exitCode === '2' ? '⚠️ Changes planned' :
+                           '❌ Plan failed';
+
+            const body = `### Terraform Plan — \`${{ matrix.environment }}\` ${status}
+
+            <details>
+            <summary>Show Plan</summary>
+
+            \`\`\`terraform
+            ${truncated}
+            \`\`\`
+            </details>
+
+            *Workflow: \`${{ github.workflow }}\` · Run: [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})*`;
+
+            // Find and update existing comment if present
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(c =>
+              c.user.type === 'Bot' &&
+              c.body.includes(`Terraform Plan — \`${{ matrix.environment }}\``)
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Fail on plan error
+        if: steps.plan.outputs.exit-code == '1'
+        run: |
+          echo "Terraform plan failed for ${{ matrix.environment }}"
+          exit 1
+
+  # ---------------------------------------------------------------------------
+  # Apply — runs on push to main (with manual approval for production)
+  # ---------------------------------------------------------------------------
+  terraform-apply-dev:
+    name: Terraform Apply — dev
+    runs-on: ubuntu-24.04
+    needs: terraform-validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment:
+      name: dev
+      url: https://console.cloud.google.com/home/dashboard?project=${{ secrets.GCP_PROJECT_ID_DEV }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform and GCP auth
+        uses: ./.github/actions/setup-terraform
+        with:
+          terraform-version: ${{ env.TF_VERSION }}
+          gcp-workload-identity-provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          gcp-service-account: ${{ env.GCP_SERVICE_ACCOUNT }}
+          working-directory: infra/gcp/environments/dev
+          terraform-init: "true"
+
+      - name: Terraform apply
+        working-directory: infra/gcp/environments/dev
+        run: |
+          terraform plan -out=dev.tfplan
+          terraform apply -auto-approve dev.tfplan
+
+  terraform-apply-staging:
+    name: Terraform Apply — staging
+    runs-on: ubuntu-24.04
+    needs: terraform-apply-dev
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment:
+      name: staging
+      url: https://console.cloud.google.com/home/dashboard?project=${{ secrets.GCP_PROJECT_ID_STAGING }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform and GCP auth
+        uses: ./.github/actions/setup-terraform
+        with:
+          terraform-version: ${{ env.TF_VERSION }}
+          gcp-workload-identity-provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          gcp-service-account: ${{ env.GCP_SERVICE_ACCOUNT }}
+          working-directory: infra/gcp/environments/staging
+          terraform-init: "true"
+
+      - name: Terraform apply
+        working-directory: infra/gcp/environments/staging
+        run: |
+          terraform plan -out=staging.tfplan
+          terraform apply -auto-approve staging.tfplan
+
+  terraform-apply-production:
+    name: Terraform Apply — production
+    runs-on: ubuntu-24.04
+    needs: terraform-apply-staging
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # GitHub environment with required reviewers configured in repo settings
+    environment:
+      name: production
+      url: https://console.cloud.google.com/home/dashboard?project=${{ secrets.GCP_PROJECT_ID_PROD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform and GCP auth
+        uses: ./.github/actions/setup-terraform
+        with:
+          terraform-version: ${{ env.TF_VERSION }}
+          gcp-workload-identity-provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          gcp-service-account: ${{ env.GCP_SERVICE_ACCOUNT }}
+          working-directory: infra/gcp/environments/production
+          terraform-init: "true"
+
+      - name: Terraform apply
+        working-directory: infra/gcp/environments/production
+        run: |
+          terraform plan -out=production.tfplan
+          terraform apply -auto-approve production.tfplan

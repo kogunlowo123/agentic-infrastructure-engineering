@@ -1,0 +1,290 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"  # Matches v0.1.0, v1.0.0, v1.2.3-rc.1, etc.
+
+permissions:
+  contents: write      # Create GitHub releases
+  id-token: write      # Workload Identity Federation for GCP auth
+  packages: write      # Publish container metadata (if using GHCR alongside AR)
+  deployments: write   # Track deployment status
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false  # Never cancel a release in progress
+
+env:
+  GCP_REGION: us-central1
+  TF_VERSION: "1.8.5"
+  PYTHON_VERSION: "3.12"
+  UV_VERSION: "0.2.15"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Validate the tag and extract version metadata
+  # ---------------------------------------------------------------------------
+  validate-tag:
+    name: Validate Release Tag
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
+      semver: ${{ steps.extract.outputs.semver }}
+      is-prerelease: ${{ steps.extract.outputs.is-prerelease }}
+      changelog-entry: ${{ steps.extract.outputs.changelog-entry }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: extract
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "semver=${TAG}" >> "$GITHUB_OUTPUT"
+
+          # Detect pre-release (contains -, e.g., v1.0.0-rc.1, v1.0.0-alpha.1)
+          if echo "$VERSION" | grep -qE "[-]"; then
+            echo "is-prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is-prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Validate version matches VERSION file
+          FILE_VERSION=$(cat VERSION | tr -d '[:space:]')
+          if [ "$FILE_VERSION" != "$VERSION" ]; then
+            echo "ERROR: Tag version ($VERSION) does not match VERSION file ($FILE_VERSION)"
+            exit 1
+          fi
+          echo "Tag and VERSION file are consistent."
+
+      - name: Extract CHANGELOG entry for this version
+        id: changelog-extract
+        run: |
+          # Extract the section for this version from CHANGELOG.md
+          VERSION="${{ steps.extract.outputs.version }}"
+          ENTRY=$(awk "/^## \[$VERSION\]/,/^## \[/" CHANGELOG.md | head -n -1 | tail -n +2)
+          if [ -z "$ENTRY" ]; then
+            echo "WARNING: No CHANGELOG entry found for version $VERSION"
+            ENTRY="See CHANGELOG.md for details."
+          fi
+          # Write to a file to handle multiline output safely
+          echo "$ENTRY" > /tmp/changelog-entry.md
+          echo "Extracted CHANGELOG entry for $VERSION"
+
+      - name: Save changelog entry
+        uses: actions/upload-artifact@v4
+        with:
+          name: changelog-entry
+          path: /tmp/changelog-entry.md
+          retention-days: 1
+
+  # ---------------------------------------------------------------------------
+  # Run final CI checks on the tag commit
+  # ---------------------------------------------------------------------------
+  pre-release-checks:
+    name: Pre-release CI Checks
+    runs-on: ubuntu-24.04
+    needs: validate-tag
+    strategy:
+      fail-fast: true
+      matrix:
+        service:
+          - api
+          - agent-runtime
+          - rag-core
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: ./.github/actions/setup-python
+        with:
+          service-directory: services/${{ matrix.service }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          uv-version: ${{ env.UV_VERSION }}
+
+      - name: Lint
+        working-directory: services/${{ matrix.service }}
+        run: |
+          uv run ruff check src/
+          uv run black --check src/
+
+      - name: Type check
+        working-directory: services/${{ matrix.service }}
+        run: uv run mypy --strict src/
+
+      - name: Unit tests
+        working-directory: services/${{ matrix.service }}
+        env:
+          ENVIRONMENT: test
+          JWT_SECRET_KEY: "release-test-secret-key-minimum-32-chars"
+          GCP_PROJECT_ID: "test-project"
+          GCP_REGION: "us-central1"
+          DATABASE_URL: "postgresql+asyncpg://test:test@localhost:5432/test"
+          REDIS_URL: "redis://localhost:6379/15"
+        run: |
+          uv run pytest tests/unit/ -v --tb=short -m "not integration"
+
+  # ---------------------------------------------------------------------------
+  # Build and push Docker images for all services
+  # ---------------------------------------------------------------------------
+  build-push-images:
+    name: Build & Push — ${{ matrix.service }}
+    runs-on: ubuntu-24.04
+    needs: [validate-tag, pre-release-checks]
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - api
+          - agent-runtime
+          - rag-core
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DOCKER_PUSH_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build and push image
+        uses: ./.github/actions/docker-build-push
+        with:
+          service: ${{ matrix.service }}
+          gcp-project-id: ${{ secrets.GCP_PROJECT_ID }}
+          gcp-region: ${{ env.GCP_REGION }}
+          image-tag: ${{ needs.validate-tag.outputs.version }}
+          additional-tags: latest
+          target: production
+          push: "true"
+          scan: "true"
+
+  # ---------------------------------------------------------------------------
+  # Deploy to GKE (production) after all images are built
+  # ---------------------------------------------------------------------------
+  deploy-production:
+    name: Deploy to GKE Production
+    runs-on: ubuntu-24.04
+    needs: [validate-tag, build-push-images]
+    if: needs.validate-tag.outputs.is-prerelease == 'false'
+    environment:
+      name: production
+      url: https://api.agentic-infra.example.com
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_GKE_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: agentic-infra-prod
+          location: ${{ env.GCP_REGION }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Install kubectl and kustomize
+        run: |
+          sudo apt-get update && sudo apt-get install -y kubectl
+          curl -sLo kustomize.tar.gz \
+            https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v5.4.2/kustomize_v5.4.2_linux_amd64.tar.gz
+          tar -xzf kustomize.tar.gz
+          sudo mv kustomize /usr/local/bin/
+
+      - name: Update image tags in Kustomize overlay
+        working-directory: infra/kubernetes/overlays/production
+        run: |
+          VERSION="${{ needs.validate-tag.outputs.version }}"
+          REGISTRY="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/agentic-infra"
+
+          for svc in api agent-runtime rag-core; do
+            kustomize edit set image ${svc}=${REGISTRY}/${svc}:${VERSION}
+          done
+
+      - name: Apply Kubernetes manifests
+        run: |
+          kustomize build infra/kubernetes/overlays/production | kubectl apply -f -
+
+      - name: Wait for rollout
+        run: |
+          for deployment in agentic-api agentic-agent-runtime agentic-rag-core; do
+            kubectl rollout status deployment/$deployment \
+              -n agentic-infra \
+              --timeout=300s
+          done
+
+      - name: Smoke test production
+        run: |
+          sleep 15
+          API_URL="https://api.agentic-infra.example.com"
+          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "${API_URL}/health")
+          if [ "$STATUS" != "200" ]; then
+            echo "Smoke test FAILED: /health returned HTTP $STATUS"
+            exit 1
+          fi
+          echo "Smoke test PASSED: /health returned HTTP 200"
+
+  # ---------------------------------------------------------------------------
+  # Create GitHub Release with CHANGELOG
+  # ---------------------------------------------------------------------------
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-24.04
+    needs: [validate-tag, build-push-images, deploy-production]
+    if: always() && needs.validate-tag.result == 'success' && needs.build-push-images.result == 'success'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download changelog entry
+        uses: actions/download-artifact@v4
+        with:
+          name: changelog-entry
+          path: /tmp/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.validate-tag.outputs.semver }}
+          name: "Release ${{ needs.validate-tag.outputs.semver }}"
+          body_path: /tmp/changelog-entry.md
+          prerelease: ${{ needs.validate-tag.outputs.is-prerelease == 'true' }}
+          generate_release_notes: false
+          draft: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Post release summary
+        run: |
+          echo "### Release ${{ needs.validate-tag.outputs.semver }} Published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ needs.validate-tag.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Pre-release:** ${{ needs.validate-tag.outputs.is-prerelease }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Published images:**" >> $GITHUB_STEP_SUMMARY
+          REGISTRY="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/agentic-infra"
+          for svc in api agent-runtime rag-core; do
+            echo "- \`${REGISTRY}/${svc}:${{ needs.validate-tag.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          done

@@ -1,0 +1,142 @@
+version: "3.9"
+
+# docker-compose.override.example.yml
+#
+# Copy this file to docker-compose.override.yml for local development.
+# Settings in this file take precedence over docker-compose.yml.
+# This file is intentionally excluded from git (.gitignore).
+#
+# Usage:
+#   cp docker-compose.override.example.yml docker-compose.override.yml
+#   docker compose up -d
+
+services:
+  # ---------------------------------------------------------------------------
+  # API Gateway — expose port and enable hot-reload
+  # ---------------------------------------------------------------------------
+  api:
+    ports:
+      - "8000:8000"
+    environment:
+      - LOG_LEVEL=DEBUG
+      - RELOAD=true
+    command:
+      - uv
+      - run
+      - uvicorn
+      - api.main:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --reload
+      - --reload-dir
+      - /app/src
+    volumes:
+      - ./services/api/src:/app/src  # writable for hot-reload
+
+  # ---------------------------------------------------------------------------
+  # Agent Runtime — expose port and enable hot-reload
+  # ---------------------------------------------------------------------------
+  agent-runtime:
+    ports:
+      - "8001:8001"
+    environment:
+      - LOG_LEVEL=DEBUG
+      - RELOAD=true
+    command:
+      - uv
+      - run
+      - uvicorn
+      - agent_runtime.main:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8001"
+      - --reload
+      - --reload-dir
+      - /app/src
+    volumes:
+      - ./services/agent-runtime/src:/app/src
+
+  # ---------------------------------------------------------------------------
+  # RAG Core — expose port and enable hot-reload
+  # ---------------------------------------------------------------------------
+  rag-core:
+    ports:
+      - "8002:8002"
+    environment:
+      - LOG_LEVEL=DEBUG
+      - RELOAD=true
+    command:
+      - uv
+      - run
+      - uvicorn
+      - rag_core.main:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8002"
+      - --reload
+      - --reload-dir
+      - /app/src
+    volumes:
+      - ./services/rag-core/src:/app/src
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL — expose port for local DB tools (TablePlus, psql, etc.)
+  # ---------------------------------------------------------------------------
+  postgres:
+    ports:
+      - "5432:5432"
+
+  # ---------------------------------------------------------------------------
+  # OpenSearch — expose port for direct API access
+  # ---------------------------------------------------------------------------
+  opensearch:
+    ports:
+      - "9200:9200"
+      - "9600:9600"  # performance analyzer
+
+  # ---------------------------------------------------------------------------
+  # OpenSearch Dashboards — always enabled in local dev
+  # ---------------------------------------------------------------------------
+  opensearch-dashboards:
+    ports:
+      - "5601:5601"
+    profiles:
+      - ""  # override the 'tools' profile to always start in local dev
+
+  # ---------------------------------------------------------------------------
+  # Redis — expose port for redis-cli and RedisInsight
+  # ---------------------------------------------------------------------------
+  redis:
+    ports:
+      - "6379:6379"
+    command:
+      - redis-server
+      - --loglevel
+      - debug
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lru
+
+  # ---------------------------------------------------------------------------
+  # RedisInsight — browser-based Redis GUI (optional, available at :8001 but
+  # we use 8003 to avoid collision with agent-runtime)
+  # ---------------------------------------------------------------------------
+  redis-insight:
+    image: redis/redisinsight:2.50
+    container_name: agentic-redis-insight
+    restart: unless-stopped
+    depends_on:
+      - redis
+    networks:
+      - agentic-net
+    ports:
+      - "8003:5540"
+    volumes:
+      - ./infra/docker/redis-insight:/data
+    profiles:
+      - tools

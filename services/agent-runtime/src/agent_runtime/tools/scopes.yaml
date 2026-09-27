@@ -1,0 +1,20 @@
+tool_scopes:
+  rag_search:
+    scope: read_only
+    allowed_tiers: [T1, T2]
+    description: Read-only search over document corpus
+
+  terraform_generate:
+    scope: read_write
+    allowed_tiers: [T2]
+    description: Generates and writes Terraform HCL files
+
+  git_pr_create:
+    scope: read_write
+    allowed_tiers: [T2]
+    description: Creates git branches and opens PRs
+
+  cost_query:
+    scope: read_only
+    allowed_tiers: [T1, T2]
+    description: Read-only access to billing data

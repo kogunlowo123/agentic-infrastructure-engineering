@@ -1,0 +1,106 @@
+name: Security Finding (Non-Sensitive)
+description: >
+  Report a security concern that is NOT a vulnerability requiring private disclosure
+  (e.g., missing documentation, hardening suggestions, public CVE tracking).
+  For actual vulnerabilities, use private email reporting.
+title: "[Security]: "
+labels:
+  - security
+  - triage
+assignees:
+  - kogunlowo123
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## ⚠️ STOP — Read This Before Continuing
+
+        **This form is for non-sensitive security concerns only** — for example:
+        - Requesting documentation improvements about security configuration
+        - Tracking a public CVE in a dependency
+        - Proposing hardening improvements (e.g., stricter CSP headers, additional Checkov rules)
+        - Reporting missing security headers or informational findings with no exploitation risk
+
+        ---
+
+        ### If you have found an actual vulnerability:
+
+        **Do NOT use this public form.** Public disclosure before a fix is available puts users' cloud infrastructure at risk.
+
+        Please report vulnerabilities privately:
+
+        📧 **Email:** [kogunlowo@gmail.com](mailto:kogunlowo@gmail.com)
+        **Subject:** `[SECURITY] Agentic Infrastructure Engineering — <brief description>`
+
+        See [SECURITY.md](../SECURITY.md) for the full reporting process, including our SLA commitments and scope definition.
+
+        ---
+
+        Only continue with this form if your finding is **non-sensitive** and carries **no exploitation risk** in its current form.
+
+  - type: checkboxes
+    id: confirm-not-vuln
+    attributes:
+      label: Confirmation
+      description: You must confirm this before continuing.
+      options:
+        - label: >
+            I confirm this is NOT an exploitable vulnerability. I understand that
+            vulnerabilities must be reported privately to kogunlowo@gmail.com.
+          required: true
+
+  - type: dropdown
+    id: finding-type
+    attributes:
+      label: Finding Type
+      options:
+        - Public CVE tracking (dependency with known CVE, no current exploit)
+        - Missing security documentation
+        - Hardening recommendation (no current attack path)
+        - Checkov / IaC policy gap
+        - Security misconfiguration in non-production configuration only
+        - Other non-sensitive security concern
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe the security concern. Do not include exploitation steps or proof-of-concept code.
+    validations:
+      required: true
+
+  - type: textarea
+    id: affected-components
+    attributes:
+      label: Affected Components
+      description: Which files, services, or configurations are involved?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-remediation
+    attributes:
+      label: Proposed Remediation
+      description: If you have a suggestion for how to address this concern, describe it here.
+    validations:
+      required: false
+
+  - type: input
+    id: cve-id
+    attributes:
+      label: CVE ID (if applicable)
+      description: If this is tracking a public CVE, provide the CVE identifier.
+      placeholder: "e.g., CVE-2024-XXXXX"
+    validations:
+      required: false
+
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: Links to relevant advisories, documentation, or research.
+    validations:
+      required: false

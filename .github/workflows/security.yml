@@ -1,0 +1,285 @@
+name: Security Scans
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    # Run full security scan weekly on Sunday at 02:00 UTC
+    - cron: "0 2 * * 0"
+
+permissions:
+  contents: read
+  security-events: write  # required to upload SARIF results to GitHub Security tab
+  pull-requests: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  UV_VERSION: "0.2.15"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Checkov — IaC security scan (Terraform, Dockerfile, docker-compose)
+  # ---------------------------------------------------------------------------
+  checkov:
+    name: Checkov IaC Scan
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Checkov on Terraform
+        id: checkov-terraform
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: infra/gcp
+          framework: terraform
+          output_format: sarif
+          output_file_path: checkov-terraform.sarif
+          soft_fail: false
+          quiet: true
+          compact: true
+          # Suppress checks with documented justifications
+          skip_check: ""
+
+      - name: Run Checkov on Docker files
+        id: checkov-docker
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          framework: dockerfile,docker_compose
+          output_format: sarif
+          output_file_path: checkov-docker.sarif
+          soft_fail: true  # Dockerfile hardening: informational for now
+
+      - name: Upload Checkov Terraform SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov-terraform.sarif
+          category: checkov-terraform
+
+      - name: Upload Checkov Docker SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov-docker.sarif
+          category: checkov-docker
+
+  # ---------------------------------------------------------------------------
+  # Trivy — Docker image vulnerability scan
+  # ---------------------------------------------------------------------------
+  trivy-image:
+    name: Trivy — ${{ matrix.service }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - api
+          - agent-runtime
+          - rag-core
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build image for scanning (no push)
+        run: |
+          docker build \
+            --file services/${{ matrix.service }}/Dockerfile \
+            --tag agentic-infra/${{ matrix.service }}:scan \
+            services/${{ matrix.service }}
+
+      - name: Run Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: agentic-infra/${{ matrix.service }}:scan
+          format: sarif
+          output: trivy-${{ matrix.service }}.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+        continue-on-error: true
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-${{ matrix.service }}.sarif
+          category: trivy-${{ matrix.service }}
+
+  # ---------------------------------------------------------------------------
+  # Trivy — Filesystem scan (dependencies, IaC misconfigs in repo)
+  # ---------------------------------------------------------------------------
+  trivy-filesystem:
+    name: Trivy Filesystem Scan
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-filesystem.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "0"  # don't fail; alert via SARIF
+          ignore-unfixed: true
+
+      - name: Upload Trivy filesystem SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-filesystem.sarif
+          category: trivy-filesystem
+
+  # ---------------------------------------------------------------------------
+  # Bandit — Python static analysis for security issues
+  # ---------------------------------------------------------------------------
+  bandit:
+    name: Bandit Python Security Scan — ${{ matrix.service }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - api
+          - agent-runtime
+          - rag-core
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: ./.github/actions/setup-python
+        with:
+          service-directory: services/${{ matrix.service }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          uv-version: ${{ env.UV_VERSION }}
+
+      - name: Install bandit
+        working-directory: services/${{ matrix.service }}
+        run: uv add --dev bandit[toml]
+
+      - name: Run Bandit
+        working-directory: services/${{ matrix.service }}
+        run: |
+          uv run bandit \
+            -r src/ \
+            -f sarif \
+            -o bandit-${{ matrix.service }}.sarif \
+            -ll \
+            --severity-level medium \
+            -c pyproject.toml \
+            || true  # don't fail build; upload results for review
+
+      - name: Upload Bandit SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: services/${{ matrix.service }}/bandit-${{ matrix.service }}.sarif
+          category: bandit-${{ matrix.service }}
+
+  # ---------------------------------------------------------------------------
+  # OWASP Dependency Check — known CVE detection in Python and other dependencies
+  # ---------------------------------------------------------------------------
+  owasp-dependency-check:
+    name: OWASP Dependency Check
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: ./.github/actions/setup-python
+        with:
+          service-directory: services/api
+          python-version: ${{ env.PYTHON_VERSION }}
+          uv-version: ${{ env.UV_VERSION }}
+
+      - name: Generate requirements files for OWASP scan
+        run: |
+          mkdir -p /tmp/owasp-deps
+          for svc in api agent-runtime rag-core; do
+            uv export \
+              --directory services/$svc \
+              --no-dev \
+              --format requirements-txt \
+              > /tmp/owasp-deps/${svc}-requirements.txt
+          done
+
+      - name: Run OWASP Dependency Check
+        uses: dependency-check/Dependency-Check_Action@v1.1.0
+        with:
+          project: "agentic-infrastructure-engineering"
+          path: "/tmp/owasp-deps"
+          format: "SARIF"
+          out: "dependency-check-report"
+          args: >
+            --scan /tmp/owasp-deps
+            --enableExperimental
+            --failOnCVSS 9
+            --suppression .github/owasp-suppression.xml
+
+      - name: Upload OWASP results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: dependency-check-report/dependency-check-report.sarif
+          category: owasp-dependency-check
+
+  # ---------------------------------------------------------------------------
+  # Gitleaks — scan for secrets accidentally committed to the repository
+  # ---------------------------------------------------------------------------
+  gitleaks:
+    name: Gitleaks Secret Scan
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # scan full git history
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: "true"
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "true"
+
+  # ---------------------------------------------------------------------------
+  # Security scan gate
+  # ---------------------------------------------------------------------------
+  security-passed:
+    name: Security Scans Passed
+    runs-on: ubuntu-24.04
+    needs:
+      - checkov
+      - trivy-filesystem
+      - bandit
+      - gitleaks
+    if: always()
+    steps:
+      - name: Check critical security jobs
+        run: |
+          # checkov and gitleaks are must-pass; trivy/bandit are informational
+          if [[ "${{ needs.checkov.result }}" != "success" ]]; then
+            echo "Checkov scan failed — IaC security issues must be resolved."
+            exit 1
+          fi
+          if [[ "${{ needs.gitleaks.result }}" != "success" ]]; then
+            echo "Gitleaks scan failed — no secrets may be committed."
+            exit 1
+          fi
+          echo "Security scan gates passed."

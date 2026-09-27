@@ -1,0 +1,267 @@
+version: "3.9"
+
+# Agentic Infrastructure Engineering — Local Development Stack
+# All services required for full local development and integration testing.
+
+networks:
+  agentic-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  postgres-data:
+    driver: local
+  opensearch-data:
+    driver: local
+  redis-data:
+    driver: local
+
+services:
+  # ---------------------------------------------------------------------------
+  # API Gateway (FastAPI)
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: ./services/api
+      dockerfile: Dockerfile
+      target: development
+    image: agentic-infra/api:dev
+    container_name: agentic-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      agent-runtime:
+        condition: service_healthy
+    networks:
+      - agentic-net
+    env_file:
+      - .env
+    environment:
+      - ENVIRONMENT=development
+      - LOG_LEVEL=DEBUG
+      - DATABASE_URL=postgresql+asyncpg://agentic:agentic_dev_password@postgres:5432/agentic_db
+      - REDIS_URL=redis://redis:6379/0
+      - AGENT_RUNTIME_URL=http://agent-runtime:8001
+    volumes:
+      - ./services/api/src:/app/src:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    labels:
+      com.agentic-infra.service: "api"
+      com.agentic-infra.version: "0.1.0"
+
+  # ---------------------------------------------------------------------------
+  # Agent Runtime (LangGraph + LiteLLM)
+  # ---------------------------------------------------------------------------
+  agent-runtime:
+    build:
+      context: ./services/agent-runtime
+      dockerfile: Dockerfile
+      target: development
+    image: agentic-infra/agent-runtime:dev
+    container_name: agentic-agent-runtime
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rag-core:
+        condition: service_healthy
+    networks:
+      - agentic-net
+    env_file:
+      - .env
+    environment:
+      - ENVIRONMENT=development
+      - LOG_LEVEL=DEBUG
+      - DATABASE_URL=postgresql+asyncpg://agentic:agentic_dev_password@postgres:5432/agentic_db
+      - REDIS_URL=redis://redis:6379/0
+      - RAG_CORE_URL=http://rag-core:8002
+      - SERVICE_PORT=8001
+    volumes:
+      - ./services/agent-runtime/src:/app/src:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    labels:
+      com.agentic-infra.service: "agent-runtime"
+      com.agentic-infra.version: "0.1.0"
+
+  # ---------------------------------------------------------------------------
+  # RAG Core (pgvector + OpenSearch embeddings service)
+  # ---------------------------------------------------------------------------
+  rag-core:
+    build:
+      context: ./services/rag-core
+      dockerfile: Dockerfile
+      target: development
+    image: agentic-infra/rag-core:dev
+    container_name: agentic-rag-core
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+    networks:
+      - agentic-net
+    env_file:
+      - .env
+    environment:
+      - ENVIRONMENT=development
+      - LOG_LEVEL=DEBUG
+      - DATABASE_URL=postgresql+asyncpg://agentic:agentic_dev_password@postgres:5432/agentic_db
+      - OPENSEARCH_URL=http://opensearch:9200
+      - SERVICE_PORT=8002
+    volumes:
+      - ./services/rag-core/src:/app/src:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    labels:
+      com.agentic-infra.service: "rag-core"
+      com.agentic-infra.version: "0.1.0"
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL 16 with pgvector extension
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: agentic-postgres
+    restart: unless-stopped
+    networks:
+      - agentic-net
+    environment:
+      POSTGRES_USER: agentic
+      POSTGRES_PASSWORD: agentic_dev_password
+      POSTGRES_DB: agentic_db
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --locale=C"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentic -d agentic_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    labels:
+      com.agentic-infra.service: "postgres"
+
+  # ---------------------------------------------------------------------------
+  # OpenSearch 2.x (vector search engine)
+  # ---------------------------------------------------------------------------
+  opensearch:
+    image: opensearchproject/opensearch:2.13.0
+    container_name: agentic-opensearch
+    restart: unless-stopped
+    networks:
+      - agentic-net
+    environment:
+      - cluster.name=agentic-opensearch
+      - node.name=opensearch-node1
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
+      - DISABLE_SECURITY_PLUGIN=true
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    labels:
+      com.agentic-infra.service: "opensearch"
+
+  # OpenSearch Dashboards (optional, for local inspection)
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:2.13.0
+    container_name: agentic-opensearch-dashboards
+    restart: unless-stopped
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    networks:
+      - agentic-net
+    environment:
+      - OPENSEARCH_HOSTS=["http://opensearch:9200"]
+      - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
+    profiles:
+      - tools
+    labels:
+      com.agentic-infra.service: "opensearch-dashboards"
+
+  # ---------------------------------------------------------------------------
+  # Redis 7 (caching and distributed locks)
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7.2-alpine
+    container_name: agentic-redis
+    restart: unless-stopped
+    networks:
+      - agentic-net
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save 60 1
+      --loglevel warning
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    labels:
+      com.agentic-infra.service: "redis"
+
+  # ---------------------------------------------------------------------------
+  # Database migrations (runs once and exits)
+  # ---------------------------------------------------------------------------
+  migrations:
+    build:
+      context: ./services/api
+      dockerfile: Dockerfile
+      target: development
+    container_name: agentic-migrations
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - agentic-net
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://agentic:agentic_dev_password@postgres:5432/agentic_db
+    command: ["uv", "run", "alembic", "upgrade", "head"]
+    restart: "no"
+    labels:
+      com.agentic-infra.service: "migrations"

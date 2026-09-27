@@ -1,0 +1,59 @@
+{
+  "title": "Agentic Infrastructure Engineering - Cost by Tenant",
+  "uid": "agentic-infra-cost",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "5m",
+  "time": { "from": "now-30d", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Monthly LLM Spend by Tenant (USD)",
+      "type": "bargauge",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 10 },
+      "targets": [
+        {
+          "expr": "sum(llm_cost_usd_total{namespace=\"agentic-infra\"}) by (tenant_id)",
+          "legendFormat": "{{tenant_id}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Budget Utilization % by Tenant",
+      "type": "gauge",
+      "gridPos": { "x": 0, "y": 10, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "(sum(llm_cost_usd_total{namespace=\"agentic-infra\"}) by (tenant_id) / sum(llm_budget_limit_usd{namespace=\"agentic-infra\"}) by (tenant_id)) * 100",
+          "legendFormat": "{{tenant_id}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "steps": [
+              { "value": 0, "color": "green" },
+              { "value": 80, "color": "yellow" },
+              { "value": 95, "color": "red" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Token Usage by Model (30d)",
+      "type": "piechart",
+      "gridPos": { "x": 12, "y": 10, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum(llm_tokens_total{namespace=\"agentic-infra\"}) by (model)",
+          "legendFormat": "{{model}}"
+        }
+      ]
+    }
+  ]
+}
