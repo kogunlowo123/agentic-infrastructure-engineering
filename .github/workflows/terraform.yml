@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -57,7 +57,7 @@ jobs:
 
       - name: Post fmt comment
         if: github.event_name == 'pull_request' && steps.fmt.outcome == 'failure'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             github.rest.issues.createComment({
@@ -88,7 +88,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Terraform and GCP auth
         uses: ./.github/actions/setup-terraform
@@ -124,7 +124,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Terraform and GCP auth
         uses: ./.github/actions/setup-terraform
@@ -147,7 +147,7 @@ jobs:
         continue-on-error: true
 
       - name: Save plan output
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tf-plan-${{ matrix.environment }}
           path: |
@@ -156,7 +156,7 @@ jobs:
           retention-days: 7
 
       - name: Post plan comment on PR
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         if: always()
         with:
           script: |
@@ -236,7 +236,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Terraform and GCP auth
         uses: ./.github/actions/setup-terraform
@@ -264,7 +264,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Terraform and GCP auth
         uses: ./.github/actions/setup-terraform
@@ -293,7 +293,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Terraform and GCP auth
         uses: ./.github/actions/setup-terraform
